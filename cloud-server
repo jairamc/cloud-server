@@ -1,0 +1,56 @@
+#!/bin/bash
+
+VOLUME="cloud-server-config"
+IMAGE="jairamc/cloud-server"
+
+function volume_exists {
+  if [ "x$(docker ps -a | grep ${VOLUME} | wc -l)" != "x0" ]; then
+    echo "true"
+  else
+    echo "false"
+  fi
+}
+
+function create_config_volume {
+  if [ "$(volume_exists)" = "false" ]; then
+    docker create -v /config --name $VOLUME alpine /bin/true > /dev/null
+  fi
+}
+
+function remove_config_volume {
+  if [ "$(volume_exists)" = "true" ]; then
+    docker rm $VOLUME
+  fi
+}
+
+function cmd {
+  create_config_volume
+  docker run -it --rm --volumes-from $VOLUME -v /var/run/docker.sock:/var/run/docker.sock --entrypoint /run.sh $IMAGE $@
+}
+
+function update {
+  curl https://raw.githubusercontent.com/jairamc/cloud-server/master/install.sh | bash
+  docker pull $IMAGE
+  remove_config_volume
+}
+
+case "$1" in
+  update)
+    update
+    cmd $@
+    ;;
+  start|stop|logs|status)
+    cmd $@
+    ;;
+
+  rm)
+    remove_config_volume
+    docker rmi -f $IMAGE
+    ;;
+
+  *)
+    echo $"Invalid input $@"
+    echo $"Usage: $0 {update|start|stop|logs|status|rm}"
+    exit 1
+
+esac

@@ -1,0 +1,210 @@
+---
+version: '2'
+services:
+
+  <% if @config.has_key?('mysql') %>
+  mysql:
+    image: mariadb
+    environment:
+      MYSQL_ROOT_PASSWORD: "<%= @config['mysql']['root_password'] %>"
+      MYSQL_DATABASE: "<%= @config['mysql']['nextcloud_db'] %>"
+      MYSQL_USER: "<%= @config['mysql']['nextcloud_user'] %>"
+      MYSQL_PASSWORD: "<%= @config['mysql']['nextcloud_user_password'] %>"
+    volumes:
+    - <%= @config['common']['data_dir'] %>/mysql:/var/lib/mysql
+    logging:
+      driver: <%= @config['common']['log_driver'] %>
+  <% end %>
+
+  <% if @config.has_key?('mysql-backup') %>
+  mysql-backup:
+    image: hauptmedia/mariadb-backup
+    depends_on:
+    - mysql
+    volumes:
+    - <%= @config['common']['data_dir'] %>/mysql-backup:/var/backups
+    ports:
+    - 18080:18080
+    environment:
+      SCHEDULE: "<%= @config['mysql-backup']['schedule'] %>"
+      BACKUP_METHOD: mysqldump
+      COMPRESSION_METHOD: gzip
+      BACKUP_OPTS: "-u root -p<%= @config['mysql']['root_password'] %> -h mysql"
+    logging:
+      driver: <%= @config['common']['log_driver'] %>
+  <% end %>
+
+  <% if @config.has_key?('nextcloud') %>
+  nextcloud:
+    image: nextcloud:fpm
+    depends_on:
+    - mysql
+    volumes:
+    - <%= @config['common']['data_dir'] %>/cloud/nextcloud:/var/www/html
+    - <%= @config['common']['data_dir'] %>/cloud/apps:/var/www/html/custom_apps
+    - <%= @config['common']['data_dir'] %>/cloud/config:/var/www/html/config
+    - <%= @config['common']['data_dir'] %>/cloud/data:/var/www/html/data
+    environment:
+      MYSQL_DATABASE: "<%= @config['mysql']['nextcloud_db'] %>"
+      MYSQL_USER: "<%= @config['mysql']['nextcloud_user'] %>"
+      MYSQL_PASSWORD: "<%= @config['mysql']['nextcloud_user_password'] %>"
+      MYSQL_HOST: mysql
+    logging:
+      driver: <%= @config['common']['log_driver'] %>
+
+  nginx:
+    image: nginx
+    volumes:
+      - <%= @config['common']['data_dir'] %>/nginx.conf:/etc/nginx/nginx.conf:ro
+    volumes_from:
+      - nextcloud
+    depends_on:
+      - nextcloud
+    environment:
+      VIRTUAL_HOST: <%= @config['nextcloud']['virtual_host'] %>
+      LETSENCRYPT_HOST: <%= @config['nextcloud']['virtual_host'] %>
+      <% if @config['nextcloud'].has_key?('letsencrypt_email') %>LETSENCRYPT_EMAIL: <%= @config['nextcloud']['letsencrypt_email'] %><% end %>
+
+  nginx-proxy:
+    image: jwilder/nginx-proxy
+    container_name: nginx-proxy
+    labels:
+      - "com.github.jrcs.letsencrypt_nginx_proxy_companion.nginx_proxy"
+    ports:
+    - 80:80
+    - 443:443
+    environment:
+      DEFAULT_HOST: <%= @config['nextcloud']['virtual_host'] %>
+    volumes:
+    - /var/run/docker.sock:/tmp/docker.sock:ro
+    - <%= @config['common']['data_dir'] %>/uploadsize.conf:/etc/nginx/conf.d/uploadsize.conf
+    - <%= @config['common']['data_dir'] %>/ssl:/etc/nginx/certs
+    - /etc/nginx/vhost.d
+    - /etc/nginx/conf.d
+    - /usr/share/nginx/html
+    logging:
+      driver: <%= @config['common']['log_driver'] %>
+
+  <% if @config['nextcloud'].has_key?('letsencrypt_email') %>
+  letsencrypt-nginx-proxy-companion:
+    image: jrcs/letsencrypt-nginx-proxy-companion
+    volumes_from:
+    - nginx-proxy
+    volumes:
+    - <%= @config['common']['data_dir'] %>/ssl:/etc/nginx/certs:rw
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    logging:
+      driver: <%= @config['common']['log_driver'] %>
+  <% end %>
+  <% end %>
+
+  <% if @config.has_key?('zerotier-one') %>
+  zerotier-one:
+    container_name: zerotier-one
+    image: zerotier/zerotier-containerized
+    devices:
+    - /dev/net/tun
+    network_mode: host
+    volumes:
+    - <%= @config['common']['data_dir'] %>/zerotier-one:/var/lib/zerotier-one
+    cap_add:
+    - SYS_ADMIN
+    - NET_ADMIN
+    logging:
+      driver: <%= @config['common']['log_driver'] %>
+  <% end %>
+
+  <% if @config.has_key?('webhosts') %>
+  <% @config['webhosts'].each do |host, info| %>
+  <%= host %>:
+    image: <%= info['image'] %>
+    environment:
+      VIRTUAL_HOST: <%= info['host'] %>
+  <% end %>
+  <% end %>
+
+  <% if @config.has_key?('rsync') %>
+  rsync:
+    image: kyleondy/rsync
+    ports:
+    - "2222:22"
+    volumes:
+    - <%= @config['common']['data_dir'] %>/authorized_keys:/root/.ssh/authorized_keys
+    - <%= @config['common']['data_dir'] %>:/data:ro
+    logging:
+      driver: <%= @config['common']['log_driver'] %>
+  <% end %>
+
+  <% if @config.has_key?('backblaze-backup') %>
+  b2-backup:
+    container_name: b2-backup
+    image: jairamc/backblaze-backup
+    ports:
+    - 18081:18080
+    volumes:
+    - <%= @config['common']['data_dir'] %>:<%= @config['common']['data_dir'] %>:ro
+    - <%= @config['common']['backup_dir'] %>:<%= @config['common']['backup_dir'] %>
+    environment:
+      SCHEDULE: <%= @config['backblaze-backup']['schedule'] %>
+    logging:
+      driver: <%= @config['common']['log_driver'] %>
+  <% end %>
+
+  <% if @config.has_key?('dns') %>
+  pi-hole:
+    image: diginc/pi-hole
+    ports:
+      - "8080:80/tcp"
+      - "53:53/tcp"
+      - "53:53/udp"
+    environment:
+      DNS1: "172.17.0.1#8054"
+      DNS2: "172.17.0.1#8055"
+      ServerIP: 127.0.0.1
+    logging:
+      driver: <%= @config['common']['log_driver'] %>
+  dnscrypt-wrapper:
+    image: vimagick/dnscrypt-wrapper
+    ports:
+      - "444:443/udp"
+      - "444:443/tcp"
+    environment:
+      LISTEN_ADDR: 0.0.0.0:443
+      RESOLVER_ADDR: 172.17.0.1:53
+      PROVIDER_NAME: 2.dnscrypt-cert.cloudserver.xyz
+    logging:
+      driver: <%= @config['common']['log_driver'] %>
+    restart: always
+  dnscrypt-proxy-eu1:
+    image: gists/dnscrypt-proxy
+    ports:
+      - "8054:8054/udp"
+      - "8054:8054/tcp"
+    environment:
+      USER: nobody
+      LOCAL_IP: 0.0.0.0
+      LOCAL_PORT: 8054
+      RESOLVER_IP: 176.56.237.171
+      RESOLVER_PORT: 443
+      PROVIDER_NAME: 2.dnscrypt-cert.resolver1.dnscrypt.eu
+      PROVIDER_KEY: "67C0:0F2C:21C5:5481:45DD:7CB4:6A27:1AF2:EB96:9931:40A3:09B6:2B8D:1653:1185:9C66"
+    logging:
+      driver: <%= @config['common']['log_driver'] %>
+    restart: always
+  dnscrypt-proxy-eu2:
+    image: gists/dnscrypt-proxy
+    ports:
+      - "8055:8055/udp"
+      - "8055:8055/tcp"
+    environment:
+      USER: nobody
+      LOCAL_IP: 0.0.0.0
+      LOCAL_PORT: 8055
+      RESOLVER_IP: 77.66.84.233
+      RESOLVER_PORT: 443
+      PROVIDER_NAME: 2.dnscrypt-cert.resolver2.dnscrypt.eu
+      PROVIDER_KEY: "3748:5585:E3B9:D088:FD25:AD36:B037:01F5:520C:D648:9E9A:DD52:1457:4955:9F0A:9955"
+    logging:
+      driver: <%= @config['common']['log_driver'] %>
+    restart: always
+  <% end %>
