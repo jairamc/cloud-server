@@ -60,7 +60,13 @@ services:
     ports:
       - 9980:9980
     environment:
-      domain: <%= @config['office']['domain'] %>
+      domain: <%= @config['nextcloud']['virtual_host'] %>
+      VIRTUAL_HOST: <%= @config['office']['domain'] %>
+      VIRTUAL_PORT: 9980
+      VIRTUAL_PROTO: https
+      LETSENCRYPT_HOST: <%= @config['office']['domain'] %>
+      <% if @config['nextcloud'].has_key?('letsencrypt_email') %>LETSENCRYPT_EMAIL: <%= @config['nextcloud']['letsencrypt_email'] %><% end %>
+
   <% end %>
 
   nginx:
