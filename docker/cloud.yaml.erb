@@ -52,6 +52,17 @@ services:
     logging:
       driver: <%= @config['common']['log_driver'] %>
 
+  <% if @config.has_key?('office') %>
+  collabora:
+    image: collabora/code
+    cap_add:
+      - MKNOD
+    ports:
+      - 9980:9980
+    environment:
+      domain: <%= @config['office']['domain'] %>
+  <% end %>
+
   nginx:
     image: nginx
     volumes:
@@ -60,6 +71,7 @@ services:
       - nextcloud
     depends_on:
       - nextcloud
+      <%if @config.has_key?('office') %>- collabora <% end %>
     environment:
       VIRTUAL_HOST: <%= @config['nextcloud']['virtual_host'] %>
       LETSENCRYPT_HOST: <%= @config['nextcloud']['virtual_host'] %>
@@ -96,6 +108,7 @@ services:
     logging:
       driver: <%= @config['common']['log_driver'] %>
   <% end %>
+
   <% end %>
 
   <% if @config.has_key?('zerotier-one') %>
